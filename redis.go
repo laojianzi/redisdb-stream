@@ -3,6 +3,8 @@ package redisdb
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -83,7 +85,11 @@ func (w *Worker) startConsumer() {
 			w.opts.group,
 			"$",
 		).Err(); err != nil {
-			w.opts.logger.Error(err)
+			if err.Error() == "BUSYGROUP Consumer Group name already exists" {
+				w.opts.logger.Info(err)
+			} else {
+				w.opts.logger.Error(err)
+			}
 		}
 
 		go w.fetchTask()
@@ -110,7 +116,14 @@ func (w *Worker) fetchTask() {
 			Block: w.opts.blockTime,
 		}).Result()
 		if err != nil {
-			w.opts.logger.Errorf("error while reading from redis %v", err)
+			workerInfo := fmt.Sprintf("{streamName: %q, group: %q, consumer: %q}",
+				w.opts.streamName, w.opts.group, w.opts.consumer)
+			if errors.Is(err, redis.Nil) {
+				w.opts.logger.Infof("no data while reading from redis stream %s", workerInfo)
+			} else {
+				w.opts.logger.Errorf("error while reading from redis %s %v", workerInfo, err)
+			}
+
 			continue
 		}
 		// we have received the data we should loop it and queue the messages
